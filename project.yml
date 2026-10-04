@@ -3,6 +3,17 @@ options:
   bundleIdPrefix: com.spacevpn
   deploymentTarget:
     iOS: "16.0"
+  createIntermediateGroups: true
+
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    IPHONEOS_DEPLOYMENT_TARGET: "16.0"
+    CODE_SIGN_STYLE: Manual
+    CODE_SIGNING_REQUIRED: "NO"
+    CODE_SIGNING_ALLOWED: "NO"
+    CODE_SIGN_IDENTITY: ""
+
 packages:
   SwiftyXrayKit:
     url: https://github.com/dima-u/SwiftyXrayKit.git
@@ -12,37 +23,60 @@ targets:
   SpaceVPN:
     type: application
     platform: iOS
-    deploymentTarget: "16.0"
     sources:
-      - path: SpaceVPN
-    resources:
-      - path: SpaceVPN/Assets.xcassets
+      - SpaceVPN
+    info:
+      path: SpaceVPN/Info.plist
+      properties:
+        CFBundleExecutable: "$(EXECUTABLE_NAME)"
+        CFBundleName: "$(PRODUCT_NAME)"
+        CFBundleIdentifier: "$(PRODUCT_BUNDLE_IDENTIFIER)"
+        CFBundlePackageType: "APPL"
+        CFBundleShortVersionString: "1.0"
+        CFBundleVersion: "1"
+        LSRequiresIPhoneOS: true
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+    entitlements:
+      path: SpaceVPN/SpaceVPN.entitlements
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.spacevpn.client
-        INFOPLIST_FILE: SpaceVPN/Info.plist
-        CODE_SIGN_ENTITLEMENTS: SpaceVPN/SpaceVPN.entitlements
-        SWIFT_VERSION: 5.0
-        TARGETED_DEVICE_FAMILY: "1,2"
-        SUPPORTS_MACCATALYST: NO
+        INFOPLIST_KEY_CFBundleDisplayName: "SpaceVPN"
+        TARGETED_DEVICE_FAMILY: "1"
+        GENERATE_INFOPLIST_FILE: NO
+        INFOPLIST_KEY_CFBundleExecutable: "$(EXECUTABLE_NAME)"
     dependencies:
       - target: PacketTunnel
         embed: true
-        codeSign: false
       - package: SwiftyXrayKit
+        product: SwiftyXrayKit
 
   PacketTunnel:
     type: app-extension
     platform: iOS
-    deploymentTarget: "15.0"
     sources:
-      - path: PacketTunnel
+      - PacketTunnel
+    info:
+      path: PacketTunnel/Info.plist
+      properties:
+        CFBundleExecutable: "$(EXECUTABLE_NAME)"
+        CFBundleName: "$(PRODUCT_NAME)"
+        CFBundleIdentifier: "$(PRODUCT_BUNDLE_IDENTIFIER)"
+        CFBundlePackageType: "XPC!"
+        CFBundleShortVersionString: "1.0"
+        CFBundleVersion: "1"
+        NSExtension:
+          NSExtensionPointIdentifier: "com.apple.networkextension.packet-tunnel"
+          NSExtensionPrincipalClass: "$(PRODUCT_MODULE_NAME).PacketTunnelProvider"
+    entitlements:
+      path: PacketTunnel/PacketTunnel.entitlements
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.spacevpn.client.PacketTunnel
-        INFOPLIST_FILE: PacketTunnel/Info.plist
-        CODE_SIGN_ENTITLEMENTS: PacketTunnel/PacketTunnel.entitlements
-        SWIFT_VERSION: 5.0
-        SKIP_INSTALL: YES
+        GENERATE_INFOPLIST_FILE: NO
+        INFOPLIST_KEY_CFBundleExecutable: "$(EXECUTABLE_NAME)"
     dependencies:
       - package: SwiftyXrayKit
+        product: SwiftyXrayKit

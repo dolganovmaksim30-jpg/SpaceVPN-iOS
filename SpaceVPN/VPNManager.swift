@@ -1,99 +1,102 @@
 import Foundation
 import NetworkExtension
-import SwiftUI
+
+enum TunnelState {
+    case disconnected
+    case connecting
+    case connected
+    case disconnecting
+    case error
+}
 
 @MainActor
 final class VPNManager: ObservableObject {
-    @Published var profiles: [VPNProfile] = []
-    @Published var selectedID: UUID?
-    @Published var status: NEVPNStatus = .disconnected
-    @Published var errorMessage: String?
+    static let shared = VPNManager()
+
+    @Published var state: TunnelState = .disconnected
+    @Published var lastError: String?
 
     private var manager: NETunnelProviderManager?
 
-    init() {
-        loadSavedProfiles()
-        Task { await refreshStatus() }
+    private init() {
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(statusChanged),
+            name: .NEVPNStatusDidChange,
+            object: nil
+        )
     }
 
-    func importText(_ text: String) {
-        let parsed = ShareLinkParser.parse(text)
-        guard !parsed.isEmpty else {
-            errorMessage = "Не удалось найти VPN-ссылку или Base64-конфигурацию."
-            return
-        }
-        profiles.append(contentsOf: parsed)
-        selectedID = profiles.last?.id
-        saveProfiles()
+    @objc private func statusChanged() {
+        refreshFromManager()
     }
 
-    func connect() {
-        guard let profile = profiles.first(where: { $0.id == selectedID }) else {
-            errorMessage = "Сначала выбери сервер."
-            return
+    func refreshFromManager() {
+        NETunnelProviderManager.loadAllFromPreferences { managers, _ in
+            guard let m = managers?.first else {
+                DispatchQueue.main.async { self.state = .disconnected }
+                return
+            }
+            DispatchQueue.main.async { self.manager = m; self.applyStatus(m.connection.status) }
         }
+    }
 
-        Task {
-            do {
-                let manager = try await loadManager()
-                let proto = NETunnelProviderProtocol()
-                proto.providerBundleIdentifier = "com.spacevpn.client.PacketTunnel"
-                proto.serverAddress = profile.address
-                proto.providerConfiguration = [
-                    "shareLink": profile.raw,
-                    "routing": "global"
-                ]
-                proto.disconnectOnSleep = false
+    private func applyStatus(_ s: NEVPNStatus) {
+        switch s {
+        case .connected:        state = .connected
+        case .connecting:       state = .connecting
+        case .disconnecting:    state = .disconnecting
+        case .disconnected, .invalid: state = .disconnected
+        case .reasserting:      state = .connecting
+        @unknown default:       state = .disconnected
+        }
+    }
 
-                manager.protocolConfiguration = proto
-                manager.localizedDescription = "SpaceVPN"
-                manager.isEnabled = true
-                try await manager.saveToPreferences()
-                try await manager.loadFromPreferences()
-                try manager.connection.startVPNTunnel()
-                self.manager = manager
-            } catch {
-                errorMessage = error.localizedDescription
+    func toggle(profile: VPNProfile) {
+        if state == .connected || state == .connecting {
+            stop()
+        } else {
+            start(profile: profile)
+        }
+    }
+
+    func start(profile: VPNProfile) {
+        state = .connecting
+        NETunnelProviderManager.loadAllFromPreferences { managers, _ in
+            let mgr = managers?.first ?? NETunnelProviderManager()
+            mgr.protocolConfiguration = self.makeProtocol(for: profile)
+            mgr.localizedDescription = "SpaceVPN"
+            mgr.isEnabled = true
+            mgr.saveToPreferences { error in
+                if let error = error {
+                    DispatchQueue.main.async { self.state = .error; self.lastError = error.localizedDescription }
+                    return
+                }
+                mgr.loadFromPreferences { _ in
+                    do {
+                        try mgr.connection.startVPNTunnel()
+                        DispatchQueue.main.async { self.manager = mgr; self.state = .connecting }
+                    } catch {
+                        DispatchQueue.main.async { self.state = .error; self.lastError = error.localizedDescription }
+                    }
+                }
             }
         }
     }
 
-    func disconnect() {
+    func stop() {
+        state = .disconnecting
         manager?.connection.stopVPNTunnel()
-    }
-
-    func refreshStatus() async {
-        do {
-            let m = try await loadManager()
-            manager = m
-            status = m.connection.status
-        } catch {
-            // No VPN profile yet is a normal first-run state.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+            if self.state == .disconnecting { self.state = .disconnected }
         }
     }
 
-    private func loadManager() async throws -> NETunnelProviderManager {
-        let managers = try await NETunnelProviderManager.loadAllFromPreferences()
-        if let existing = managers.first(where: {
-            ($0.protocolConfiguration as? NETunnelProviderProtocol)?
-                .providerBundleIdentifier == "com.spacevpn.client.PacketTunnel"
-        }) {
-            return existing
-        }
-        return NETunnelProviderManager()
-    }
-
-    private func loadSavedProfiles() {
-        if let data = UserDefaults.standard.data(forKey: "profiles"),
-           let decoded = try? JSONDecoder().decode([VPNProfile].self, from: data) {
-            profiles = decoded
-            selectedID = decoded.first?.id
-        }
-    }
-
-    private func saveProfiles() {
-        if let data = try? JSONEncoder().encode(profiles) {
-            UserDefaults.standard.set(data, forKey: "profiles")
-        }
+    private func makeProtocol(for profile: VPNProfile) -> NETunnelProviderProtocol {
+        let proto = NETunnelProviderProtocol()
+        proto.providerBundleIdentifier = "com.spacevpn.client.PacketTunnel"
+        proto.serverAddress = profile.server
+        proto.providerConfiguration = ["rawLink": profile.rawLink]
+        return proto
     }
 }

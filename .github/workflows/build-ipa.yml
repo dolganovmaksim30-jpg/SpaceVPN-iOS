@@ -1,0 +1,53 @@
+name: Build unsigned IPA
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Resolve packages
+        run: xcodebuild -resolvePackageDependencies -project SpaceVPN.xcodeproj -scheme SpaceVPN
+
+      - name: Build archive (unsigned)
+        run: |
+          xcodebuild \
+            -project SpaceVPN.xcodeproj \
+            -scheme SpaceVPN \
+            -sdk iphoneos \
+            -configuration Release \
+            -archivePath "$PWD/build/SpaceVPN.xcarchive" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            archive
+
+      - name: Verify app extension is embedded
+        run: |
+          test -d "build/SpaceVPN.xcarchive/Products/Applications/SpaceVPN.app/PlugIns/PacketTunnel.appex"
+          /usr/libexec/PlistBuddy -c "Print :NSExtension:NSExtensionPointIdentifier" "build/SpaceVPN.xcarchive/Products/Applications/SpaceVPN.app/PlugIns/PacketTunnel.appex/Info.plist"
+
+      - name: Package unsigned IPA
+        run: |
+          rm -rf build/Payload
+          mkdir -p build/Payload
+          cp -R build/SpaceVPN.xcarchive/Products/Applications/SpaceVPN.app build/Payload/
+          cd build
+          zip -qry SpaceVPN-unsigned.ipa Payload
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: SpaceVPN-unsigned-ipa
+          path: build/SpaceVPN-unsigned.ipa

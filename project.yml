@@ -1,0 +1,48 @@
+name: SpaceVPN
+options:
+  bundleIdPrefix: com.spacevpn
+  deploymentTarget:
+    iOS: "15.0"
+packages:
+  SwiftyXrayKit:
+    url: https://github.com/dima-u/SwiftyXrayKit.git
+    from: 1.1.0
+
+targets:
+  SpaceVPN:
+    type: application
+    platform: iOS
+    deploymentTarget: "15.0"
+    sources:
+      - path: SpaceVPN
+    resources:
+      - path: SpaceVPN/Assets.xcassets
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.spacevpn.client
+        INFOPLIST_FILE: SpaceVPN/Info.plist
+        CODE_SIGN_ENTITLEMENTS: SpaceVPN/SpaceVPN.entitlements
+        SWIFT_VERSION: 5.0
+        TARGETED_DEVICE_FAMILY: "1,2"
+        SUPPORTS_MACCATALYST: NO
+    dependencies:
+      - target: PacketTunnel
+        embed: true
+        codeSign: false
+      - package: SwiftyXrayKit
+
+  PacketTunnel:
+    type: app-extension
+    platform: iOS
+    deploymentTarget: "15.0"
+    sources:
+      - path: PacketTunnel
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.spacevpn.client.PacketTunnel
+        INFOPLIST_FILE: PacketTunnel/Info.plist
+        CODE_SIGN_ENTITLEMENTS: PacketTunnel/PacketTunnel.entitlements
+        SWIFT_VERSION: 5.0
+        SKIP_INSTALL: YES
+    dependencies:
+      - package: SwiftyXrayKit

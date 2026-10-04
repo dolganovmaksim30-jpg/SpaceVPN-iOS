@@ -12,7 +12,7 @@ targets:
   SpaceVPN:
     type: application
     platform: iOS
-    deploymentTarget: "15.0"
+    deploymentTarget: "16.0"
     sources:
       - path: SpaceVPN
     resources:

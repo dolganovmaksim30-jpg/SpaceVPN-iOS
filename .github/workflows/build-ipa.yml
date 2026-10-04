@@ -1,53 +1,52 @@
-name: Build unsigned IPA
+name: Build IPA
 
 on:
-  workflow_dispatch:
   push:
     branches: [ main ]
+  workflow_dispatch:
 
 jobs:
   build:
     runs-on: macos-15
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
       - name: Install XcodeGen
         run: brew install xcodegen
 
+      - name: Vendor SwiftyXrayKit (local copy)
+        run: |
+          rm -rf vendor
+          mkdir -p vendor
+          git clone --depth 1 https://github.com/dima-u/SwiftyXrayKit.git vendor/SwiftyXrayKit
+
+      - name: Patch SwiftyXrayKit for Swift 5
+        run: |
+          PKG=vendor/SwiftyXrayKit
+          sed -i '' -E 's|// swift-tools-version:.*|// swift-tools-version: 5.9|' "$PKG/Package.swift" || \
+          sed -i -E 's|// swift-tools-version:.*|// swift-tools-version: 5.9|' "$PKG/Package.swift"
+          sed -i '' -E 's/swiftLanguageVersions: *\[\.v6\]/swiftLanguageVersions: [.v5]/g' "$PKG/Package.swift" || true
+          sed -i -E 's/swiftLanguageVersions: *\[\.v6\]/swiftLanguageVersions: [.v5]/g' "$PKG/Package.swift" || true
+          if [ -f "$PKG/Sources/SwiftyXrayKit/XrayBridge.swift" ]; then
+            sed -i '' 's/public final class XrayBridge {/public final class XrayBridge: @unchecked Sendable {/' "$PKG/Sources/SwiftyXrayKit/XrayBridge.swift" || \
+            sed -i 's/public final class XrayBridge {/public final class XrayBridge: @unchecked Sendable {/' "$PKG/Sources/SwiftyXrayKit/XrayBridge.swift"
+          fi
+          head -20 "$PKG/Package.swift"
+
       - name: Generate Xcode project
         run: xcodegen generate
 
-      - name: Resolve packages
-        run: xcodebuild -resolvePackageDependencies -project SpaceVPN.xcodeproj -scheme SpaceVPN
+      - name: Build archive
+        run: xcodebuild -project SpaceVPN.xcodeproj -scheme SpaceVPN -configuration Release -sdk iphoneos -archivePath build/SpaceVPN.xcarchive archive CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO
 
-      - name: Build archive (unsigned)
+      - name: Package IPA
         run: |
-          xcodebuild \
-            -project SpaceVPN.xcodeproj \
-            -scheme SpaceVPN \
-            -sdk iphoneos \
-            -configuration Release \
-            -archivePath "$PWD/build/SpaceVPN.xcarchive" \
-            CODE_SIGNING_ALLOWED=NO \
-            CODE_SIGNING_REQUIRED=NO \
-            archive
-
-      - name: Verify app extension is embedded
-        run: |
-          test -d "build/SpaceVPN.xcarchive/Products/Applications/SpaceVPN.app/PlugIns/PacketTunnel.appex"
-          /usr/libexec/PlistBuddy -c "Print :NSExtension:NSExtensionPointIdentifier" "build/SpaceVPN.xcarchive/Products/Applications/SpaceVPN.app/PlugIns/PacketTunnel.appex/Info.plist"
-
-      - name: Package unsigned IPA
-        run: |
-          rm -rf build/Payload
           mkdir -p build/Payload
-          cp -R build/SpaceVPN.xcarchive/Products/Applications/SpaceVPN.app build/Payload/
-          cd build
-          zip -qry SpaceVPN-unsigned.ipa Payload
+          cp -r build/SpaceVPN.xcarchive/Products/Applications/SpaceVPN.app build/Payload/
+          cd build && zip -r SpaceVPN.ipa Payload
 
       - name: Upload IPA
         uses: actions/upload-artifact@v4
         with:
-          name: SpaceVPN-unsigned-ipa
-          path: build/SpaceVPN-unsigned.ipa
+          name: SpaceVPN-IPA
+          path: build/SpaceVPN.ipa

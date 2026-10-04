@@ -1,194 +1,370 @@
 import SwiftUI
-import NetworkExtension
 
 struct ContentView: View {
-    @EnvironmentObject private var vpn: VPNManager
-    @State private var importText = ""
-    @State private var showingImport = false
-
-    private var isConnected: Bool {
-        vpn.status == .connected || vpn.status == .connecting
-    }
+    @StateObject private var vpn = VPNManager.shared
+    @State private var profiles: [VPNProfile] = ProfileStore.shared.profiles
+    @State private var selected: VPNProfile? = ProfileStore.shared.profiles.first
+    @State private var showImport = false
 
     var body: some View {
         NavigationStack {
             ZStack {
-                LinearGradient(
-                    colors: [.black, Color(red: 0.07, green: 0.08, blue: 0.11)],
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
-                .ignoresSafeArea()
+                Color.black.ignoresSafeArea()
 
-                ScrollView {
-                    VStack(spacing: 24) {
-                        header
-                        connectionCard
-                        serverList
-                        importCard
-                    }
-                    .padding(20)
+                VStack(spacing: 24) {
+                    header
+
+                    statusCircle
+                        .padding(.top, 12)
+
+                    connectButton
+
+                    Spacer(minLength: 8)
+
+                    serversSection
+
+                    importButton
                 }
+                .padding(.horizontal, 20)
+                .padding(.bottom, 20)
             }
             .navigationBarHidden(true)
-            .sheet(isPresented: $showingImport) {
-                ImportView(text: $importText) {
-                    vpn.importText(importText)
-                    importText = ""
-                    showingImport = false
+            .onAppear {
+                vpn.refreshFromManager()
+                reloadProfiles()
+            }
+            .sheet(isPresented: $showImport) {
+                ImportView { newOnes in
+                    ProfileStore.shared.add(newOnes)
+                    reloadProfiles()
+                    if selected == nil { selected = newOnes.first }
                 }
                 .presentationDetents([.medium, .large])
             }
-            .alert("SpaceVPN", isPresented: Binding(
-                get: { vpn.errorMessage != nil },
-                set: { if !$0 { vpn.errorMessage = nil } }
-            )) {
-                Button("OK", role: .cancel) { vpn.errorMessage = nil }
-            } message: {
-                Text(vpn.errorMessage ?? "")
-            }
         }
+        .preferredColorScheme(.dark)
     }
 
+    // MARK: - Header
     private var header: some View {
         HStack {
-            VStack(alignment: .leading, spacing: 5) {
+            VStack(alignment: .leading, spacing: 2) {
                 Text("SpaceVPN")
-                    .font(.system(size: 32, weight: .bold, design: .rounded))
+                    .font(.system(size: 32, weight: .bold))
+                    .foregroundColor(.white)
                 Text("Private connection")
-                    .foregroundStyle(.secondary)
+                    .font(.subheadline)
+                    .foregroundColor(.gray)
             }
             Spacer()
             Image(systemName: "shield.lefthalf.filled")
-                .font(.system(size: 28))
+                .font(.system(size: 26))
+                .foregroundColor(.white)
         }
-        .padding(.top, 18)
+        .padding(.top, 8)
     }
 
-    private var connectionCard: some View {
-        VStack(spacing: 18) {
-            ZStack {
-                Circle()
-                    .stroke(.white.opacity(0.08), lineWidth: 18)
-                    .frame(width: 190, height: 190)
-                Circle()
-                    .stroke(isConnected ? .green : .white.opacity(0.25), lineWidth: 3)
-                    .frame(width: 170, height: 170)
+    // MARK: - Круг статуса с анимацией
+    private var statusCircle: some View {
+        ZStack {
+            Circle()
+                .fill(circleFillColor.opacity(0.10))
+                .frame(width: 260, height: 260)
+                .scaleEffect(pulseScale)
+                .opacity(pulseOpacity)
+                .animation(
+                    isAnimating
+                    ? .easeInOut(duration: 1.4).repeatForever(autoreverses: true)
+                    : .default,
+                    value: pulseScale
+                )
 
-                VStack(spacing: 8) {
-                    Image(systemName: isConnected ? "lock.fill" : "lock.open")
-                        .font(.system(size: 34))
-                    Text(isConnected ? "CONNECTED" : "DISCONNECTED")
-                        .font(.system(size: 13, weight: .bold, design: .rounded))
-                }
-            }
+            Circle()
+                .stroke(circleStrokeColor, lineWidth: 3)
+                .frame(width: 200, height: 200)
 
-            Button {
-                if isConnected {
-                    vpn.disconnect()
-                } else {
-                    vpn.connect()
-                }
-            } label: {
-                Text(isConnected ? "Disconnect" : "Connect")
-                    .font(.system(size: 17, weight: .semibold))
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 16)
-                    .background(isConnected ? .white.opacity(0.10) : .white)
-                    .foregroundStyle(isConnected ? .white : .black)
-                    .clipShape(RoundedRectangle(cornerRadius: 18))
+            VStack(spacing: 12) {
+                Image(systemName: circleIcon)
+                    .font(.system(size: 42, weight: .medium))
+                    .foregroundColor(circleStrokeColor)
+                Text(stateLabel)
+                    .font(.system(size: 14, weight: .bold))
+                    .tracking(1.5)
+                    .foregroundColor(.white)
             }
         }
-        .padding(24)
-        .background(.white.opacity(0.055))
-        .clipShape(RoundedRectangle(cornerRadius: 28))
+        .frame(height: 280)
+        .onAppear { triggerPulse() }
+        .onChange(of: vpn.state) { _ in triggerPulse() }
     }
 
-    private var serverList: some View {
-        VStack(alignment: .leading, spacing: 12) {
+    private var connectButton: some View {
+        Button {
+            guard let profile = selected else {
+                showImport = true
+                return
+            }
+            vpn.toggle(profile: profile)
+        } label: {
+            Text(buttonLabel)
+                .font(.system(size: 17, weight: .semibold))
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 18)
+                .background(buttonColor)
+                .foregroundColor(.black)
+                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        }
+        .disabled(vpn.state == .connecting || vpn.state == .disconnecting)
+    }
+
+    // MARK: - Servers
+    private var serversSection: some View {
+        VStack(spacing: 12) {
             HStack {
                 Text("Servers")
                     .font(.headline)
+                    .foregroundColor(.white)
                 Spacer()
-                Button("Add") { showingImport = true }
+                if !profiles.isEmpty {
+                    Button("Clear") {
+                        ProfileStore.shared.removeAll()
+                        reloadProfiles()
+                    }
+                    .font(.subheadline)
+                    .foregroundColor(.red)
+                }
             }
 
-            if vpn.profiles.isEmpty {
-                Text("Import a VLESS / VMess / Trojan / Shadowsocks link or a Base64 subscription.")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .padding()
+            if profiles.isEmpty {
+                Text("Пусто. Нажми «Import configuration» ниже.")
+                    .font(.footnote)
+                    .foregroundColor(.gray)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.vertical, 20)
             } else {
-                ForEach(vpn.profiles) { profile in
-                    Button {
-                        vpn.selectedID = profile.id
-                    } label: {
-                        HStack(spacing: 14) {
-                            Image(systemName: "server.rack")
-                            VStack(alignment: .leading) {
-                                Text(profile.name)
-                                    .foregroundStyle(.white)
-                                Text("\(profile.protocolName) • \(profile.address):\(profile.port)")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                            Spacer()
-                            if vpn.selectedID == profile.id {
-                                Image(systemName: "checkmark.circle.fill")
-                            }
+                ScrollView {
+                    LazyVStack(spacing: 10) {
+                        ForEach(profiles) { p in
+                            serverRow(p)
                         }
-                        .padding(16)
-                        .background(.white.opacity(vpn.selectedID == profile.id ? 0.10 : 0.045))
-                        .clipShape(RoundedRectangle(cornerRadius: 16))
                     }
                 }
+                .frame(maxHeight: 220)
             }
         }
     }
 
-    private var importCard: some View {
-        Button { showingImport = true } label: {
+    private func serverRow(_ p: VPNProfile) -> some View {
+        Button {
+            selected = p
+        } label: {
             HStack {
-                Image(systemName: "arrow.down.doc.fill")
-                VStack(alignment: .leading) {
-                    Text("Import configuration")
-                        .fontWeight(.semibold)
-                    Text("Share link, Base64 or subscription")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                Image(systemName: "server.rack")
+                    .foregroundColor(.blue)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(p.name).font(.subheadline).foregroundColor(.white).lineLimit(1)
+                    Text(p.subtitle).font(.caption).foregroundColor(.gray)
                 }
                 Spacer()
-                Image(systemName: "chevron.right")
+                if selected?.id == p.id {
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundColor(.blue)
+                }
             }
-            .padding(18)
-            .background(.white.opacity(0.055))
-            .clipShape(RoundedRectangle(cornerRadius: 18))
+            .padding(14)
+            .background(Color.white.opacity(0.05))
+            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        }
+    }
+
+    private var importButton: some View {
+        Button { showImport = true } label: {
+            HStack {
+                Image(systemName: "square.and.arrow.down")
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Import configuration")
+                        .font(.system(size: 15, weight: .semibold))
+                    Text("Share link, Base64 or subscription")
+                        .font(.caption)
+                        .foregroundColor(.gray)
+                }
+                Spacer()
+                Image(systemName: "chevron.right").foregroundColor(.gray)
+            }
+            .padding(16)
+            .background(Color.blue.opacity(0.15))
+            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .foregroundColor(.blue)
+        }
+    }
+
+    // MARK: - Helpers
+    private func reloadProfiles() {
+        ProfileStore.shared.load()
+        profiles = ProfileStore.shared.profiles
+        if selected == nil { selected = profiles.first }
+    }
+
+    private var stateLabel: String {
+        switch vpn.state {
+        case .disconnected:  return "DISCONNECTED"
+        case .connecting:    return "CONNECTING…"
+        case .connected:     return "CONNECTED"
+        case .disconnecting: return "DISCONNECTING…"
+        case .error:         return "ERROR"
+        }
+    }
+
+    private var circleStrokeColor: Color {
+        switch vpn.state {
+        case .disconnected:  return Color.gray
+        case .connecting, .disconnecting: return Color.yellow
+        case .connected:     return Color.green
+        case .error:         return Color.red
+        }
+    }
+
+    private var circleFillColor: Color {
+        circleStrokeColor
+    }
+
+    private var circleIcon: String {
+        switch vpn.state {
+        case .disconnected:  return "lock.open"
+        case .connecting, .disconnecting: return "arrow.triangle.2.circlepath"
+        case .connected:     return "lock.fill"
+        case .error:         return "exclamationmark.triangle"
+        }
+    }
+
+    private var buttonLabel: String {
+        if selected == nil { return "Import a server" }
+        switch vpn.state {
+        case .disconnected, .error: return "Connect"
+        case .connecting:           return "Connecting…"
+        case .connected:            return "Disconnect"
+        case .disconnecting:        return "Disconnecting…"
+        }
+    }
+
+    private var buttonColor: Color {
+        switch vpn.state {
+        case .disconnected, .error: return .white
+        case .connecting, .disconnecting: return .yellow
+        case .connected: return .red
+        }
+    }
+
+    private var isAnimating: Bool {
+        vpn.state == .connecting || vpn.state == .disconnecting
+    }
+
+    @State private var pulseScale: CGFloat = 1.0
+    @State private var pulseOpacity: Double = 0.35
+
+    private func triggerPulse() {
+        if isAnimating {
+            pulseScale = 1.12
+            pulseOpacity = 0.7
+        } else {
+            pulseScale = 1.0
+            pulseOpacity = vpn.state == .connected ? 0.5 : 0.2
         }
     }
 }
 
-private struct ImportView: View {
-    @Binding var text: String
-    let onImport: () -> Void
+// MARK: - Import View
+struct ImportView: View {
     @Environment(\.dismiss) private var dismiss
+    @State private var url: String = ""
+    @State private var isLoading = false
+    @State private var message: String?
+    @State private var imported: [VPNProfile] = []
+
+    let onDone: ([VPNProfile]) -> Void
 
     var body: some View {
         NavigationStack {
-            VStack(spacing: 16) {
-                Text("Paste configuration")
-                    .font(.title2.bold())
-                TextEditor(text: $text)
-                    .padding(12)
-                    .background(.gray.opacity(0.15))
-                    .clipShape(RoundedRectangle(cornerRadius: 14))
-                Button("Import") { onImport() }
-                    .buttonStyle(.borderedProminent)
+            ZStack {
+                Color.black.ignoresSafeArea()
+                VStack(alignment: .leading, spacing: 16) {
+                    Text("Вставь ссылку подписки или одиночную vless://")
+                        .font(.footnote).foregroundColor(.gray)
+
+                    TextField("https://… или vless://…", text: $url, axis: .vertical)
+                        .textFieldStyle(.plain)
+                        .padding(14)
+                        .background(Color.white.opacity(0.06))
+                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                        .foregroundColor(.white)
+                        .autocapitalization(.none)
+                        .disableAutocorrection(true)
+                        .lineLimit(4...10)
+
+                    if let message {
+                        Text(message).font(.footnote).foregroundColor(.yellow)
+                    }
+
+                    Button {
+                        runImport()
+                    } label: {
+                        HStack {
+                            if isLoading { ProgressView().tint(.black) }
+                            Text(isLoading ? "Загрузка…" : "Импортировать")
+                                .font(.system(size: 16, weight: .semibold))
+                        }
+                        .frame(maxWidth: .infinity).padding(.vertical, 14)
+                        .background(Color.white)
+                        .foregroundColor(.black)
+                        .clipShape(RoundedRectangle(cornerRadius: 14))
+                    }
+                    .disabled(isLoading || url.trimmingCharacters(in: .whitespaces).isEmpty)
+
+                    if !imported.isEmpty {
+                        Text("Найдено: \(imported.count)")
+                            .foregroundColor(.green).font(.footnote)
+                        Button("Сохранить и закрыть") {
+                            onDone(imported); dismiss()
+                        }
+                        .frame(maxWidth: .infinity).padding(.vertical, 12)
+                        .background(Color.green.opacity(0.2))
+                        .foregroundColor(.green)
+                        .clipShape(RoundedRectangle(cornerRadius: 14))
+                    }
+                    Spacer()
+                }
+                .padding(20)
             }
-            .padding()
             .navigationTitle("Import")
-            .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button("Close") { dismiss() }
+            .navigationBarTitleDisplayMode(.inline)
+        }
+        .preferredColorScheme(.dark)
+    }
+
+    private func runImport() {
+        let trimmed = url.trimmingCharacters(in: .whitespacesAndNewlines)
+        message = nil
+        imported = []
+
+        // Одиночная ссылка (не http)
+        if trimmed.contains("://") && !trimmed.lowercased().hasPrefix("http") {
+            let parsed = ShareLinkParser.parseLines(trimmed)
+            if parsed.isEmpty { message = "Не удалось распарсить ссылку" }
+            else { imported = parsed }
+            return
+        }
+
+        // Подписка по URL
+        isLoading = true
+        ShareLinkParser.fetchSubscription(urlString: trimmed) { result in
+            DispatchQueue.main.async {
+                isLoading = false
+                switch result {
+                case .success(let list):
+                    if list.isEmpty { message = "Конфиги не найдены" }
+                    else { imported = list }
+                case .failure(let err):
+                    message = "Ошибка: \(err.localizedDescription)"
                 }
             }
         }

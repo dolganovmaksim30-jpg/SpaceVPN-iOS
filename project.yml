@@ -2,7 +2,7 @@ name: SpaceVPN
 options:
   bundleIdPrefix: com.spacevpn
   deploymentTarget:
-    iOS: "15.0"
+    iOS: "16.0"
 packages:
   SwiftyXrayKit:
     url: https://github.com/dima-u/SwiftyXrayKit.git

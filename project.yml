@@ -16,8 +16,7 @@ settings:
 
 packages:
   SwiftyXrayKit:
-    url: https://github.com/dima-u/SwiftyXrayKit.git
-    branch: main
+    path: vendor/SwiftyXrayKit
 
 targets:
   SpaceVPN:
